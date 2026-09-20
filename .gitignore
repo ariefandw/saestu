@@ -1,0 +1,33 @@
+# Binaries & DB
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.db
+*.db-journal
+
+# Uploads directory contents (keep folder structure)
+uploads/*
+!uploads/.gitkeep
+
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Test artifacts & browser profiles
+edge_profile*/
+edge_debug*/
+screenshot*.png
+debug_table.html
+test_baby.jpg
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

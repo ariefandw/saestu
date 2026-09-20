@@ -1,0 +1,15 @@
+services:
+  saestu-iot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saestu-iot-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./saestu_iot.db:/app/saestu_iot.db
+    environment:
+      - PORT=8080
+      - TZ=Asia/Jakarta
