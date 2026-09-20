@@ -320,14 +320,30 @@ func (app *App) handleAsyncPhotoUpload(w http.ResponseWriter, r *http.Request) {
 		`).Scan(&targetID)
 	}
 
-	if targetID > 0 {
-		app.db.Exec(`UPDATE measurements SET photo_url = ? WHERE id = ?`, photoURL, targetID)
+	var lengthCM float64
+	lengthStr := r.FormValue("length_cm")
+	if lengthStr != "" {
+		lengthCM, _ = strconv.ParseFloat(lengthStr, 64)
 	}
+
+	if targetID > 0 {
+		if lengthCM > 0 {
+			// Update photo_url dan length_cm jika sebelumnya 0 atau belum ada
+			app.db.Exec(`UPDATE measurements SET photo_url = ?, length_cm = CASE WHEN length_cm <= 0 THEN ? ELSE length_cm END WHERE id = ?`, photoURL, lengthCM, targetID)
+		} else {
+			app.db.Exec(`UPDATE measurements SET photo_url = ? WHERE id = ?`, photoURL, targetID)
+		}
+	}
+
+	// Fetch updated measurement for SSE broadcast
+	var updatedLen float64
+	_ = app.db.QueryRow(`SELECT length_cm FROM measurements WHERE id = ?`, targetID).Scan(&updatedLen)
 
 	app.broker.send("photo_updated", map[string]any{
 		"measurement_id": targetID,
-		"photo_url":       photoURL,
-		"device_id":       deviceID,
+		"photo_url":      photoURL,
+		"length_cm":      updatedLen,
+		"device_id":      deviceID,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -336,6 +352,7 @@ func (app *App) handleAsyncPhotoUpload(w http.ResponseWriter, r *http.Request) {
 		"status":         "success",
 		"photo_url":      photoURL,
 		"measurement_id": targetID,
+		"length_cm":      updatedLen,
 		"message":        "Photo uploaded and linked asynchronously",
 	})
 }
@@ -937,7 +954,12 @@ const dashboardHTML = `<!DOCTYPE html>
             renderUI();
           } else if (envelope.type === 'photo_updated') {
             const target = measurements.find(m => m.id === envelope.data.measurement_id);
-            if (target) target.photo_url = envelope.data.photo_url;
+            if (target) {
+              target.photo_url = envelope.data.photo_url;
+              if (envelope.data.length_cm > 0) {
+                target.length_cm = envelope.data.length_cm;
+              }
+            }
             renderUI();
           }
         } catch (e) {

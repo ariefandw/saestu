@@ -83,14 +83,19 @@ def post_json(endpoint, data):
     with urllib.request.urlopen(req, timeout=3) as resp:
         return json.loads(resp.read().decode('utf-8'))
 
-def upload_photo(image_bytes, filename="simulated_capture.jpg"):
+def upload_photo(image_bytes, filename="simulated_capture.jpg", length_cm=None):
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
     body = bytearray()
     body.extend(f"--{boundary}\r\n".encode('utf-8'))
     body.extend(f'Content-Disposition: form-data; name="photo"; filename="{filename}"\r\n'.encode('utf-8'))
     body.extend(b"Content-Type: image/jpeg\r\n\r\n")
     body.extend(image_bytes)
-    body.extend(f"\r\n--{boundary}--\r\n".encode('utf-8'))
+    body.extend(f"\r\n--{boundary}\r\n".encode('utf-8'))
+    body.extend(f'Content-Disposition: form-data; name="device_id"\r\n\r\n{DEVICE_ID}\r\n'.encode('utf-8'))
+    if length_cm and length_cm > 0:
+        body.extend(f"--{boundary}\r\n".encode('utf-8'))
+        body.extend(f'Content-Disposition: form-data; name="length_cm"\r\n\r\n{length_cm}\r\n'.encode('utf-8'))
+    body.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
     req = urllib.request.Request(
         f"{API_BASE}/api/v1/photos/upload",
@@ -105,9 +110,16 @@ def simulate_one_session(session_num=1):
     target_weight = random.uniform(3100.0, 4200.0) # grams (3.1 - 4.2 kg)
     target_length = random.uniform(48.0, 53.5)     # cm
 
+    # Simulasi kasus: jika session_num genap, hardware sensor TB null/0 -> dihitung via MediaPipe dari gambar
+    is_tb_sensor_null = (session_num % 2 == 0)
+
     print(f"\n=======================================================")
     print(f"[*] SESI PENIMBANGAN #{session_num}: {baby_name}")
-    print(f"[*] Target Berat: {target_weight/1000:.2f} kg ({target_weight:.0f} g), Target Panjang: {target_length:.1f} cm")
+    print(f"[*] Target Berat: {target_weight/1000:.2f} kg ({target_weight:.0f} g)")
+    if is_tb_sensor_null:
+        print(f"[*] Skenario: Sensor Fisik TB NULL/0 -> Akan dihitung via MediaPipe Pose dari foto!")
+    else:
+        print(f"[*] Skenario: Sensor Fisik TB Terpasang ({target_length:.1f} cm)")
     print(f"=======================================================")
 
     # Phase 1: Baby placed on scale -> Fluctuations (Menimbang)
@@ -119,7 +131,7 @@ def simulate_one_session(session_num=1):
         noise = random.uniform(-150.0, 150.0)
         progress = (i + 1) / steps
         current_val = (target_weight * progress) + noise
-        current_len = target_length + random.uniform(-1.5, 1.5)
+        current_len = 0.0 if is_tb_sensor_null else (target_length + random.uniform(-1.5, 1.5))
 
         post_json("/api/v1/telemetry/live", {
             "device_id": DEVICE_ID,
@@ -132,7 +144,7 @@ def simulate_one_session(session_num=1):
     # Phase 2: Weight stabilized (Stabil)
     print("[ESP32] Pembacaan stabil tercapai (is_stable = true)!")
     stable_weight = target_weight + random.uniform(-5.0, 5.0)
-    stable_length = target_length
+    stable_length = 0.0 if is_tb_sensor_null else target_length
 
     for _ in range(5):
         post_json("/api/v1/telemetry/live", {
@@ -143,25 +155,36 @@ def simulate_one_session(session_num=1):
         })
         time.sleep(0.2)
 
-    # Phase 3: Mini PC captures webcam photo & uploads async
-    print("[Mini PC Logitech] Trigger shutter -> Mengambil snapshot HD & Upload async...")
-    photo_bytes = generate_mock_baby_photo(baby_name, stable_weight/1000.0, stable_length)
-    upload_res = upload_photo(photo_bytes, f"capture_{int(time.time())}.jpg")
-    photo_url = upload_res.get("photo_url", "")
-    print(f"[Mini PC Logitech] Foto terunggah: {photo_url}")
-
-    # Phase 4: ESP32 / Gateway commits record to Database
-    print("[Backend Gateway] Menyimpan data penimbangan ke SQLite DB...")
+    # Phase 3: ESP32 commits record (Jika sensor TB null, kirim length_cm = 0)
+    print(f"[ESP32] Menyimpan data penimbangan awal ke SQLite DB (TB: {stable_length:.1f} cm)...")
     commit_res = post_json("/api/v1/measurements", {
         "device_id": DEVICE_ID,
         "weight_grams": round(stable_weight, 1),
         "length_cm": round(stable_length, 1),
-        "photo_url": photo_url,
         "notes": baby_name
     })
     record_id = commit_res.get("data", {}).get("id") or commit_res.get("id")
-    print(f"[SUCCESS] Record tersimpan ID #{record_id}!")
-    print(f"[UI UPDATE] Cek dashboard: data #{record_id}, grafik, & foto langsung ter-update.")
+    print(f"[SUCCESS] Record awal tersimpan ID #{record_id}")
+
+    # Phase 4: Mini PC captures webcam photo, detects Pose via MediaPipe, & uploads
+    print("[Mini PC Logitech] Shutter trigger -> Mengambil snapshot HD...")
+    photo_bytes = generate_mock_baby_photo(baby_name, stable_weight/1000.0, target_length)
+
+    mediapipe_length = None
+    if is_tb_sensor_null:
+        # Simulasi deteksi landmark pose (crown -> shoulder -> hip -> knee -> ankle)
+        mediapipe_length = round(target_length + random.uniform(-0.3, 0.3), 1)
+        print(f"[Mini PC MediaPipe] Sensor TB kosong! Pose Landmark terdeteksi: 520px -> Estimasi TB: {mediapipe_length} cm")
+
+    print("[Mini PC Logitech] Mengunggah foto kamera + estimasi TB ke server...")
+    upload_res = upload_photo(
+        photo_bytes, 
+        f"capture_{int(time.time())}.jpg", 
+        length_cm=mediapipe_length
+    )
+    photo_url = upload_res.get("photo_url", "")
+    print(f"[Mini PC Logitech] Foto terunggah: {photo_url}")
+    print(f"[UI UPDATE] Cek dashboard: data #{record_id} foto & TB ({upload_res.get('length_cm', stable_length)} cm) otomatis sinkron via SSE!")
 
 def main():
     print("==================================================")

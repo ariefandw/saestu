@@ -6,31 +6,29 @@ Panduan ini khusus untuk tim hardware/mahasiswa yang memegang **Mini PC** dengan
 
 ## 1. Persiapan di Mini PC
 
-Mini PC (baik memakai OS Ubuntu, Raspberry Pi OS, Debian, atau Windows) hanya butuh Python 3 dan 2 library:
+Mini PC (baik memakai OS Ubuntu, Raspberry Pi OS, Debian, atau Windows) butuh Python 3 dan library berikut:
 
 ```bash
 # Masuk ke terminal Mini PC
-pip install opencv-python requests
+pip install opencv-python requests mediapipe numpy
 ```
 
 *(Catatan jika memakai Raspberry Pi OS / Linux minimal, install juga dependency v4l2 jika diperlukan: `sudo apt-get install -y libv4l-dev python3-opencv`)*
 
 ---
 
-## 2. Cara Menjalankan Script Capture
+## 2. Cara Menjalankan Script Capture & Estimasi TB MediaPipe
 
 File script: [`minipc_camera_agent.py`](file:///C:/dev/saestu/minipc_camera_agent.py)
 
-### A. Jepret Sekali (One-Shot) saat Penimbangan Selesai
+### A. Auto-Capture + Hitung TB via MediaPipe Pose (Default)
 ```bash
-python minipc_camera_agent.py --server http://192.168.1.50:8080 --device MINIPC-POSYANDU-01
+python minipc_camera_agent.py --server http://192.168.1.50:8080 --device MINIPC-POSYANDU-01 --px-per-cm 10.5
 ```
-*Ganti `192.168.1.50` dengan alamat IP komputer server tempat Go backend berjalan.*
+*Jika ESP32/sensor fisik TB mengirim 0/null, nilai TB hasil deteksi pose MediaPipe (Head $\rightarrow$ Shoulder $\rightarrow$ Hip $\rightarrow$ Knee $\rightarrow$ Heel) akan otomatis disimpan ke database dan di-broadcast ke dashboard live.*
 
-### B. Menentukan Index Kamera (Jika ada lebih dari 1 kamera USB)
-```bash
-python minipc_camera_agent.py --server http://192.168.1.50:8080 --camera 1
-```
+### B. Kalibrasi Kamera (`--px-per-cm`)
+Ukur objek pembanding di matras timbangan (misal penggaris 10 cm = 105 pixel di kamera) $\rightarrow$ rasio = `10.5 px/cm`.
 
 ### C. Mode Loop Berkala (Otomatis Jepret tiap 5 Detik)
 ```bash
