@@ -25,6 +25,8 @@ edge_debug*/
 screenshot*.png
 debug_table.html
 test_baby.jpg
+annotated*.jpg
+*.task
 
 # OS & Editor
 .DS_Store

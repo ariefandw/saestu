@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -264,6 +266,35 @@ func (app *App) handleJSONIngest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// estimateLengthFromPhoto executes Python MediaPipe script if length is not provided
+func (app *App) estimateLengthFromPhoto(photoPath string) float64 {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "python", "estimate_length.py", "--image", photoPath, "--max-dim-cm", "100.0")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("[MediaPipe] Execution failed/skipped: %v", err)
+		return 0
+	}
+
+	var res struct {
+		Success  bool    `json:"success"`
+		LengthCM float64 `json:"length_cm"`
+		Error    string  `json:"error"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		log.Printf("[MediaPipe] JSON parse error: %v", err)
+		return 0
+	}
+
+	if res.Success && res.LengthCM > 0 {
+		log.Printf("[MediaPipe] Successfully estimated baby length: %.1f cm (from %s)", res.LengthCM, photoPath)
+		return res.LengthCM
+	}
+	return 0
+}
+
 // 3. Handle Async Photo Upload (Jepret Asinkron dari ESP32-CAM)
 func (app *App) handleAsyncPhotoUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
@@ -324,6 +355,11 @@ func (app *App) handleAsyncPhotoUpload(w http.ResponseWriter, r *http.Request) {
 	lengthStr := r.FormValue("length_cm")
 	if lengthStr != "" {
 		lengthCM, _ = strconv.ParseFloat(lengthStr, 64)
+	}
+
+	// If length is not provided by hardware sensor, attempt MediaPipe backend estimation
+	if lengthCM <= 0 {
+		lengthCM = app.estimateLengthFromPhoto(dstPath)
 	}
 
 	if targetID > 0 {
@@ -404,6 +440,11 @@ func (app *App) handleMultipartIngest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		photoURL = "/uploads/" + filename
+
+		// If length not provided from sensor, run MediaPipe estimation from saved photo
+		if length <= 0 {
+			length = app.estimateLengthFromPhoto(dstPath)
+		}
 	}
 
 	now := time.Now().UTC()
