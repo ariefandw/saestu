@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -113,9 +114,12 @@ func (b *SSEBroker) send(msgType string, data any) {
 
 // App context
 type App struct {
-	db     *sql.DB
-	broker *SSEBroker
-	upload string
+	db        *sql.DB
+	broker    *SSEBroker
+	upload    string
+	mockMu    sync.Mutex
+	mockOn    bool
+	mockStop  chan struct{}
 }
 
 func main() {
@@ -158,6 +162,9 @@ func main() {
 	mux.HandleFunc("POST /api/v1/photos/upload", app.handleAsyncPhotoUpload)
 
 	// 4. Query & Dashboard
+	mux.HandleFunc("GET /api/v1/mock", app.handleGetMockStatus)
+	mux.HandleFunc("POST /api/v1/mock/toggle", app.handleToggleMock)
+	mux.HandleFunc("POST /api/v1/mock/generate", app.handleGenerateMockMeasurement)
 	mux.HandleFunc("GET /api/v1/measurements", app.handleListMeasurements)
 	mux.HandleFunc("GET /api/v1/events", app.handleSSE)
 
@@ -568,6 +575,134 @@ func (app *App) handleDocs(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(docsHTML))
 }
 
+// --- MOCKUP SERVER CONTROLLER & SIMULATOR ---
+
+func (app *App) handleGetMockStatus(w http.ResponseWriter, r *http.Request) {
+	app.mockMu.Lock()
+	enabled := app.mockOn
+	app.mockMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"mock_enabled": enabled,
+		"status":       "ok",
+	})
+}
+
+func (app *App) handleToggleMock(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Enabled *bool `json:"enabled"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+
+	app.mockMu.Lock()
+	newState := !app.mockOn
+	if payload.Enabled != nil {
+		newState = *payload.Enabled
+	}
+
+	if newState != app.mockOn {
+		app.mockOn = newState
+		if app.mockOn {
+			app.mockStop = make(chan struct{})
+			go app.runMockWorker(app.mockStop)
+			log.Printf("🤖 Mockup Server ENABLED (Simulating IoT Scale & Camera)")
+		} else {
+			if app.mockStop != nil {
+				close(app.mockStop)
+				app.mockStop = nil
+			}
+			log.Printf("🛑 Mockup Server DISABLED")
+		}
+	}
+	current := app.mockOn
+	app.mockMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"mock_enabled": current,
+		"message":      fmt.Sprintf("Mockup server set to %v", current),
+		"status":       "success",
+	})
+}
+
+func (app *App) handleGenerateMockMeasurement(w http.ResponseWriter, r *http.Request) {
+	m := app.injectMockMeasurement("MOCK-MANUAL")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  "success",
+		"message": "Mock measurement generated manually",
+		"data":    m,
+	})
+}
+
+func (app *App) injectMockMeasurement(prefix string) Measurement {
+	// Berat realistis balita 5.5 kg - 14.5 kg
+	weightGrams := 5500.0 + rand.Float64()*9000.0
+	// Panjang realistis 60.0 cm - 98.0 cm
+	lengthCM := 60.0 + rand.Float64()*38.0
+	weightGrams = float64(int(weightGrams*10)) / 10.0
+	lengthCM = float64(int(lengthCM*10)) / 10.0
+
+	deviceID := fmt.Sprintf("%s-%03d", prefix, rand.Intn(900)+100)
+	notes := "Data Simulasi Demo Mockup (Alat IoT belum terkoneksi)"
+
+	now := time.Now().UTC()
+	res, err := app.db.Exec(
+		"INSERT INTO measurements (device_id, weight_grams, length_cm, notes, created_at) VALUES (?, ?, ?, ?, ?)",
+		deviceID, weightGrams, lengthCM, notes, now,
+	)
+	var id int64
+	if err == nil {
+		id, _ = res.LastInsertId()
+	}
+
+	m := Measurement{
+		ID:          id,
+		DeviceID:    deviceID,
+		WeightGrams: weightGrams,
+		LengthCM:    lengthCM,
+		Notes:       notes,
+		CreatedAt:   now,
+	}
+
+	app.broker.send("new_measurement", m)
+	return m
+}
+
+func (app *App) runMockWorker(stop <-chan struct{}) {
+	telemetryTicker := time.NewTicker(2 * time.Second)
+	measurementTicker := time.NewTicker(25 * time.Second)
+	defer telemetryTicker.Stop()
+	defer measurementTicker.Stop()
+
+	// Initial injection so frontend gets immediate data
+	app.injectMockMeasurement("MOCK-ESP32")
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-telemetryTicker.C:
+			// Stream live telemetry mock
+			mockWeight := 7000.0 + (rand.Float64()-0.5)*200.0
+			mockLen := 68.0 + (rand.Float64()-0.5)*1.5
+			t := LiveTelemetry{
+				DeviceID:    "MOCK-SCALE-LIVE",
+				WeightGrams: float64(int(mockWeight*10)) / 10.0,
+				LengthCM:    float64(int(mockLen*10)) / 10.0,
+				IsStable:    rand.Float64() > 0.4,
+				Timestamp:   time.Now().UTC(),
+			}
+			app.broker.send("live_telemetry", t)
+
+		case <-measurementTicker.C:
+			app.injectMockMeasurement("MOCK-ESP32")
+		}
+	}
+}
+
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -656,7 +791,19 @@ const dashboardHTML = `<!DOCTYPE html>
         <span class="font-semibold text-sm tracking-tight">Saestu Scale</span>
       </div>
 
-      <div class="flex items-center space-x-4 text-xs">
+      <div class="flex items-center space-x-3 text-xs">
+        <!-- Mockup Toggle Badge/Button -->
+        <button id="mock-toggle-btn" onclick="toggleMockServer()" class="px-2.5 py-1 rounded-lg border font-medium mono flex items-center gap-1.5 transition text-[11px] bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:opacity-80" title="Klik untuk menghidupkan/mematikan Mockup Server">
+          <span class="w-2 h-2 rounded-full bg-zinc-400" id="mock-status-indicator"></span>
+          <span id="mock-btn-label">Mock: OFF</span>
+        </button>
+
+        <!-- Generate Manual Mock Data -->
+        <button onclick="triggerMockData()" class="p-1.5 rounded-lg theme-btn flex items-center justify-center text-[11px] mono border theme-divider" title="Generate 1 Data Pengukuran Demo">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-500"></i>
+          <span class="hidden sm:inline ml-1 font-semibold">Simulasi Data</span>
+        </button>
+
         <span id="status-text" class="theme-muted mono">Connecting...</span>
         
         <!-- Dark/Light Mode Toggle Button -->
@@ -973,6 +1120,59 @@ const dashboardHTML = `<!DOCTYPE html>
       } else {
         badge.className = 'px-2.5 py-1 rounded-md bg-zinc-800 text-white dark:bg-zinc-700 dark:text-zinc-100 border border-zinc-700 dark:border-zinc-600 mono font-semibold tracking-wide';
         badge.textContent = 'Menimbang';
+      }
+    }
+
+    async function fetchMockStatus() {
+      try {
+        const res = await fetch('/api/v1/mock');
+        if (res.ok) {
+          const data = await res.json();
+          updateMockUI(data.mock_enabled);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function updateMockUI(enabled) {
+      const btn = document.getElementById('mock-toggle-btn');
+      const ind = document.getElementById('mock-status-indicator');
+      const label = document.getElementById('mock-btn-label');
+      if (!btn || !ind || !label) return;
+
+      if (enabled) {
+        btn.className = 'px-2.5 py-1 rounded-lg border font-semibold mono flex items-center gap-1.5 transition text-[11px] bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:opacity-80 shadow-xs';
+        ind.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        label.textContent = 'Mock: ON (Demo)';
+      } else {
+        btn.className = 'px-2.5 py-1 rounded-lg border font-medium mono flex items-center gap-1.5 transition text-[11px] bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:opacity-80';
+        ind.className = 'w-2 h-2 rounded-full bg-zinc-400';
+        label.textContent = 'Mock: OFF';
+      }
+    }
+
+    async function toggleMockServer() {
+      try {
+        const res = await fetch('/api/v1/mock/toggle', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          updateMockUI(data.mock_enabled);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function triggerMockData() {
+      try {
+        const res = await fetch('/api/v1/mock/generate', { method: 'POST' });
+        if (res.ok) {
+          fetchInitialData();
+      fetchMockStatus();
+        }
+      } catch (err) {
+        console.error(err);
       }
     }
 
