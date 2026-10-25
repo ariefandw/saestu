@@ -176,7 +176,20 @@ func main() {
 	log.Printf("📸 Async Photo Upload: POST http://localhost%s/api/v1/photos/upload", addr)
 	log.Printf("==================================================")
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		mux.ServeHTTP(w, r)
+	})
+
+	if err := http.ListenAndServe(addr, corsHandler); err != nil {
 		log.Fatalf("Server stopped: %v", err)
 	}
 }
