@@ -33,3 +33,7 @@ annotated*.jpg
 Thumbs.db
 .vscode/
 .idea/
+
+# Secrets
+.env
+*.bak

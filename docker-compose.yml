@@ -13,3 +13,6 @@ services:
     environment:
       - PORT=8080
       - TZ=Asia/Jakarta
+      - DEVICE_API_KEY=${DEVICE_API_KEY:?DEVICE_API_KEY wajib diisi}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - ENABLE_MOCK=${ENABLE_MOCK:-false}

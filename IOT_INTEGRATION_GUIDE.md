@@ -122,3 +122,15 @@ void uploadPhotoAsync() {
   http.end();
 }
 ```
+
+---
+
+## ?? Autentikasi & Aturan Validasi (WAJIB)
+
+Semua endpoint `POST` (telemetry, measurements, with-photo, photos/upload) wajib header:
+
+```
+X-API-Key: <DEVICE_API_KEY>
+```
+
+- Tanpa/ salah key -> `401`. Server tidak mau start kalau `DEVICE_API_KEY` kosong (< 16 karakter). - `weight_grams` harus 500-30000. `length_cm` harus `0` (tidak diukur) atau 20-130. Di luar itu -> `422`. - `device_id` berawalan `MOCK` ditolak. Data mock hanya dibuat server saat `ENABLE_MOCK=true` (dev saja). - `GET /api/v1/measurements` menerima `filter=all|real|mock` dan `max_age_sec=N` (umur dihitung jam server). Tiap record punya field `source`. - CORS hanya untuk origin di env `ALLOWED_ORIGINS` (pisah koma). - Jangan jalankan `simulate_iot.py` ke server produksi: `device_id` simulasi tercatat sebagai data **real**.

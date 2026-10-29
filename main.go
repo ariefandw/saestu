@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,7 @@ type Measurement struct {
 	LengthCM    float64   `json:"length_cm"`
 	PhotoURL    string    `json:"photo_url,omitempty"`
 	Notes       string    `json:"notes,omitempty"`
+	Source      string    `json:"source"` // "real" | "mock"
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -120,6 +123,7 @@ type App struct {
 	mockMu    sync.Mutex
 	mockOn    bool
 	mockStop  chan struct{}
+	deviceKey string
 }
 
 func main() {
@@ -143,28 +147,38 @@ func main() {
 		log.Fatalf("Failed to init db schema: %v", err)
 	}
 
+	deviceKey := os.Getenv("DEVICE_API_KEY")
+	if len(deviceKey) < 16 {
+		log.Fatalf("DEVICE_API_KEY wajib diisi (minimal 16 karakter). Server menolak jalan tanpa auth.")
+	}
+
 	app := &App{
-		db:     db,
-		broker: newSSEBroker(),
-		upload: uploadDir,
+		db:        db,
+		broker:    newSSEBroker(),
+		upload:    uploadDir,
+		deviceKey: deviceKey,
 	}
 
 	mux := http.NewServeMux()
 
 	// 1. Live Telemetry Stream (High Frequency, In-Memory -> SSE)
-	mux.HandleFunc("POST /api/v1/telemetry/live", app.handleLiveTelemetry)
+	mux.HandleFunc("POST /api/v1/telemetry/live", app.requireDeviceKey(app.handleLiveTelemetry))
 
 	// 2. Commit Final Measurement (Saved to SQLite DB)
-	mux.HandleFunc("POST /api/v1/measurements", app.handleJSONIngest)
-	mux.HandleFunc("POST /api/v1/measurements/with-photo", app.handleMultipartIngest)
+	mux.HandleFunc("POST /api/v1/measurements", app.requireDeviceKey(app.handleJSONIngest))
+	mux.HandleFunc("POST /api/v1/measurements/with-photo", app.requireDeviceKey(app.handleMultipartIngest))
 
 	// 3. Async Photo Upload (Jepret terpisah, di-link ke measurement terbaru)
-	mux.HandleFunc("POST /api/v1/photos/upload", app.handleAsyncPhotoUpload)
+	mux.HandleFunc("POST /api/v1/photos/upload", app.requireDeviceKey(app.handleAsyncPhotoUpload))
 
 	// 4. Query & Dashboard
-	mux.HandleFunc("GET /api/v1/mock", app.handleGetMockStatus)
-	mux.HandleFunc("POST /api/v1/mock/toggle", app.handleToggleMock)
-	mux.HandleFunc("POST /api/v1/mock/generate", app.handleGenerateMockMeasurement)
+	// Mock HANYA aktif kalau ENABLE_MOCK=true (dev/demo). Di produksi route-nya tidak ada.
+	if os.Getenv("ENABLE_MOCK") == "true" {
+		log.Printf("WARNING: ENABLE_MOCK=true, endpoint mock aktif. Jangan dipakai di produksi.")
+		mux.HandleFunc("GET /api/v1/mock", app.handleGetMockStatus)
+		mux.HandleFunc("POST /api/v1/mock/toggle", app.handleToggleMock)
+		mux.HandleFunc("POST /api/v1/mock/generate", app.handleGenerateMockMeasurement)
+	}
 	mux.HandleFunc("GET /api/v1/measurements", app.handleListMeasurements)
 	mux.HandleFunc("GET /api/v1/events", app.handleSSE)
 
@@ -183,10 +197,21 @@ func main() {
 	log.Printf("📸 Async Photo Upload: POST http://localhost%s/api/v1/photos/upload", addr)
 	log.Printf("==================================================")
 
+	// CORS allowlist eksplisit. ALLOWED_ORIGINS="https://app.example.com,http://localhost:3000"
+	allowedOrigins := map[string]bool{}
+	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			allowedOrigins[o] = true
+		}
+	}
+
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With")
+		if origin := r.Header.Get("Origin"); origin != "" && allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-API-Key")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -214,8 +239,89 @@ func initDB(db *sql.DB) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_measurements_created_at ON measurements(created_at DESC);
 	`
-	_, err := db.Exec(query)
+	if _, err := db.Exec(query); err != nil {
+		return err
+	}
+
+	// Migrasi: kolom source ('real' | 'mock') menggantikan tebak-tebakan prefix device_id.
+	rows, err := db.Query(`PRAGMA table_info(measurements)`)
+	if err != nil {
+		return err
+	}
+	hasSource := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "source" {
+			hasSource = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasSource {
+		if _, err := db.Exec(`ALTER TABLE measurements ADD COLUMN source TEXT NOT NULL DEFAULT 'real'`); err != nil {
+			return err
+		}
+		// Backfill data lama yang jelas-jelas mock.
+		if _, err := db.Exec(`UPDATE measurements SET source = 'mock'
+			WHERE UPPER(device_id) LIKE 'MOCK%' OR notes LIKE '%Simulasi%' OR notes LIKE '%Mockup%'`); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_measurements_source_created ON measurements(source, created_at DESC)`)
 	return err
+}
+
+// Batas validasi fisik bayi/balita. length_cm == 0 berarti "tidak diukur".
+const (
+	minWeightGrams = 500.0
+	maxWeightGrams = 30000.0
+	minLengthCM    = 20.0
+	maxLengthCM    = 130.0
+	maxBodyBytes   = 12 << 20
+)
+
+// validateReading mengembalikan pesan error, atau "" kalau valid.
+// Perbandingan ditulis positif supaya NaN ikut ditolak.
+func validateReading(deviceID string, weight, length float64) string {
+	if strings.HasPrefix(strings.ToUpper(deviceID), "MOCK") {
+		return "device_id berawalan MOCK dilarang di endpoint ingest"
+	}
+	if !(weight >= minWeightGrams && weight <= maxWeightGrams) {
+		return fmt.Sprintf("weight_grams harus %.0f-%.0f", minWeightGrams, maxWeightGrams)
+	}
+	if length != 0 && !(length >= minLengthCM && length <= maxLengthCM) {
+		return fmt.Sprintf("length_cm harus 0 (tidak diukur) atau %.0f-%.0f", minLengthCM, maxLengthCM)
+	}
+	return ""
+}
+
+// requireDeviceKey melindungi endpoint tulis. Key via header X-API-Key atau Authorization: Bearer.
+func (app *App) requireDeviceKey(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-API-Key")
+		if key == "" {
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				key = strings.TrimPrefix(auth, "Bearer ")
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(key), []byte(app.deviceKey)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		next(w, r)
+	}
 }
 
 // 1. Handle Real-Time Live Telemetry (Zero DB Write, Immediate SSE Broadcast)
@@ -249,14 +355,14 @@ func (app *App) handleJSONIngest(w http.ResponseWriter, r *http.Request) {
 		payload.DeviceID = "ESP32-SCALE"
 	}
 
-	if payload.WeightGrams <= 0 {
-		http.Error(w, `{"error":"Weight must be greater than 0"}`, http.StatusUnprocessableEntity)
+	if msg := validateReading(payload.DeviceID, payload.WeightGrams, payload.LengthCM); msg != "" {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), http.StatusUnprocessableEntity)
 		return
 	}
 
 	now := time.Now().UTC()
 	res, err := app.db.Exec(
-		`INSERT INTO measurements (device_id, weight_grams, length_cm, notes, created_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO measurements (device_id, weight_grams, length_cm, notes, source, created_at) VALUES (?, ?, ?, ?, 'real', ?)`,
 		payload.DeviceID, payload.WeightGrams, payload.LengthCM, payload.Notes, now,
 	)
 	if err != nil {
@@ -272,6 +378,7 @@ func (app *App) handleJSONIngest(w http.ResponseWriter, r *http.Request) {
 		WeightGrams: payload.WeightGrams,
 		LengthCM:    payload.LengthCM,
 		Notes:       payload.Notes,
+		Source:      "real",
 		CreatedAt:   now,
 	}
 
@@ -367,8 +474,9 @@ func (app *App) handleAsyncPhotoUpload(w http.ResponseWriter, r *http.Request) {
 		err = app.db.QueryRow(`
 			SELECT id FROM measurements 
 			WHERE (photo_url IS NULL OR photo_url = '') 
+			AND source = 'real' AND created_at >= ?
 			ORDER BY created_at DESC LIMIT 1
-		`).Scan(&targetID)
+		`, time.Now().UTC().Add(-10*time.Minute)).Scan(&targetID)
 	}
 
 	var lengthCM float64
@@ -427,13 +535,17 @@ func (app *App) handleMultipartIngest(w http.ResponseWriter, r *http.Request) {
 
 	weightStr := r.FormValue("weight_grams")
 	weight, err := strconv.ParseFloat(weightStr, 64)
-	if err != nil || weight <= 0 {
+	if err != nil {
 		http.Error(w, `{"error":"Valid weight_grams is required"}`, http.StatusUnprocessableEntity)
 		return
 	}
 
 	lengthStr := r.FormValue("length_cm")
 	length, _ := strconv.ParseFloat(lengthStr, 64)
+	if msg := validateReading(deviceID, weight, length); msg != "" {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), http.StatusUnprocessableEntity)
+		return
+	}
 	notes := r.FormValue("notes")
 
 	var photoURL string
@@ -469,7 +581,7 @@ func (app *App) handleMultipartIngest(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	res, err := app.db.Exec(
-		`INSERT INTO measurements (device_id, weight_grams, length_cm, photo_url, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO measurements (device_id, weight_grams, length_cm, photo_url, notes, source, created_at) VALUES (?, ?, ?, ?, ?, 'real', ?)`,
 		deviceID, weight, length, photoURL, notes, now,
 	)
 	if err != nil {
@@ -486,6 +598,7 @@ func (app *App) handleMultipartIngest(w http.ResponseWriter, r *http.Request) {
 		LengthCM:    length,
 		PhotoURL:    photoURL,
 		Notes:       notes,
+		Source:      "real",
 		CreatedAt:   now,
 	}
 
@@ -509,16 +622,35 @@ func (app *App) handleListMeasurements(w http.ResponseWriter, r *http.Request) {
 
 	filter := r.URL.Query().Get("filter") // "all" | "real" | "mock"
 
-	query := `SELECT id, device_id, weight_grams, length_cm, COALESCE(photo_url, ''), COALESCE(notes, ''), created_at 
+	query := `SELECT id, device_id, weight_grams, length_cm, COALESCE(photo_url, ''), COALESCE(notes, ''), source, created_at 
 		 FROM measurements`
+	var conds []string
 	var args []any
 
-	if filter == "real" {
-		query += " WHERE device_id NOT LIKE 'MOCK%'"
-	} else if filter == "mock" {
-		query += " WHERE device_id LIKE 'MOCK%'"
+	switch filter {
+	case "real", "mock":
+		conds = append(conds, "source = ?")
+		args = append(args, filter)
+	case "", "all":
+	default:
+		http.Error(w, `{"error":"filter must be all|real|mock"}`, http.StatusBadRequest)
+		return
 	}
 
+	// max_age_sec: umur dihitung pakai jam SERVER edge, bukan jam HP kader.
+	if v := r.URL.Query().Get("max_age_sec"); v != "" {
+		sec, err := strconv.Atoi(v)
+		if err != nil || sec <= 0 || sec > 7*24*3600 {
+			http.Error(w, `{"error":"max_age_sec invalid"}`, http.StatusBadRequest)
+			return
+		}
+		conds = append(conds, "created_at >= ?")
+		args = append(args, time.Now().UTC().Add(-time.Duration(sec)*time.Second))
+	}
+
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
 	query += " ORDER BY created_at DESC LIMIT ?"
 	args = append(args, limit)
 
@@ -533,7 +665,7 @@ func (app *App) handleListMeasurements(w http.ResponseWriter, r *http.Request) {
 	list := make([]Measurement, 0)
 	for rows.Next() {
 		var m Measurement
-		if err := rows.Scan(&m.ID, &m.DeviceID, &m.WeightGrams, &m.LengthCM, &m.PhotoURL, &m.Notes, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.DeviceID, &m.WeightGrams, &m.LengthCM, &m.PhotoURL, &m.Notes, &m.Source, &m.CreatedAt); err != nil {
 			log.Printf("Scan error: %v", err)
 			continue
 		}
@@ -554,7 +686,6 @@ func (app *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	messageChan := make(chan []byte, 10)
 	app.broker.newClients <- messageChan
@@ -661,7 +792,7 @@ func (app *App) injectMockMeasurement(prefix string) Measurement {
 
 	now := time.Now().UTC()
 	res, err := app.db.Exec(
-		"INSERT INTO measurements (device_id, weight_grams, length_cm, notes, created_at) VALUES (?, ?, ?, ?, ?)",
+		"INSERT INTO measurements (device_id, weight_grams, length_cm, notes, source, created_at) VALUES (?, ?, ?, ?, 'mock', ?)",
 		deviceID, weightGrams, lengthCM, notes, now,
 	)
 	var id int64
@@ -675,6 +806,7 @@ func (app *App) injectMockMeasurement(prefix string) Measurement {
 		WeightGrams: weightGrams,
 		LengthCM:    lengthCM,
 		Notes:       notes,
+		Source:      "mock",
 		CreatedAt:   now,
 	}
 

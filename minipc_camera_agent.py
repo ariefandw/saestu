@@ -160,7 +160,12 @@ def upload_photo(server_url, image_bytes, device_id="MINIPC-LOGITECH-01", measur
         data['length_cm'] = str(length_cm)
 
     try:
-        response = requests.post(endpoint, data=data, files=files, timeout=10)
+        import os
+        api_key = os.environ.get("DEVICE_API_KEY", "")
+        if not api_key:
+            print("ERROR: env DEVICE_API_KEY belum di-set")
+            return False
+        response = requests.post(endpoint, data=data, files=files, headers={"X-API-Key": api_key}, timeout=10)
         if response.status_code == 200:
             result = response.json()
             print(f"[SUCCESS] Foto berhasil diunggah!")
