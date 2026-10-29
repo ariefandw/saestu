@@ -507,11 +507,22 @@ func (app *App) handleListMeasurements(w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 
-	rows, err := app.db.Query(
-		`SELECT id, device_id, weight_grams, length_cm, COALESCE(photo_url, ''), COALESCE(notes, ''), created_at 
-		 FROM measurements ORDER BY created_at DESC LIMIT ?`,
-		limit,
-	)
+	filter := r.URL.Query().Get("filter") // "all" | "real" | "mock"
+
+	query := `SELECT id, device_id, weight_grams, length_cm, COALESCE(photo_url, ''), COALESCE(notes, ''), created_at 
+		 FROM measurements`
+	var args []any
+
+	if filter == "real" {
+		query += " WHERE device_id NOT LIKE 'MOCK%'"
+	} else if filter == "mock" {
+		query += " WHERE device_id LIKE 'MOCK%'"
+	}
+
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := app.db.Query(query, args...)
 	if err != nil {
 		log.Printf("DB query error: %v", err)
 		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
@@ -897,8 +908,16 @@ const dashboardHTML = `<!DOCTYPE html>
 
     <!-- Data Table -->
     <div class="theme-card border rounded-2xl p-6 space-y-4 shadow-sm dark:shadow-none">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-medium theme-muted">Log Penimbangan</span>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-medium theme-muted">Log Penimbangan</span>
+          <!-- Tab Filter Real Hardware vs Mock -->
+          <div class="inline-flex p-0.5 rounded-lg border theme-divider theme-subtle text-[11px] mono">
+            <button id="filter-all" onclick="setMeasurementFilter('all')" class="px-2 py-0.5 rounded-md font-semibold transition bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-xs">Semua</button>
+            <button id="filter-real" onclick="setMeasurementFilter('real')" class="px-2 py-0.5 rounded-md theme-muted hover:text-zinc-900 dark:hover:text-zinc-100 transition">Real Hardware</button>
+            <button id="filter-mock" onclick="setMeasurementFilter('mock')" class="px-2 py-0.5 rounded-md theme-muted hover:text-zinc-900 dark:hover:text-zinc-100 transition">Mock Sim</button>
+          </div>
+        </div>
         <button onclick="fetchInitialData()" class="flex items-center gap-1.5 text-xs theme-link">
           <i data-lucide="rotate-cw" class="w-3 h-3"></i>
           <span>Refresh</span>
@@ -1054,6 +1073,17 @@ const dashboardHTML = `<!DOCTYPE html>
       const latest = measurements[0];
       document.getElementById('stat-total-count').textContent = measurements.length + ' Data';
 
+      // Update hero card values from latest measurement if not receiving live telemetry yet
+      if (document.getElementById('live-device-id').textContent === 'Device: --') {
+        document.getElementById('live-weight').textContent = (latest.weight_grams / 1000).toFixed(2);
+        document.getElementById('live-weight-grams').textContent = '(' + Math.round(latest.weight_grams) + ' g)';
+        if (latest.length_cm > 0) {
+          document.getElementById('live-length').textContent = latest.length_cm.toFixed(1);
+        }
+        document.getElementById('live-device-id').textContent = 'Device: ' + latest.device_id;
+        document.getElementById('live-timestamp').textContent = new Date(latest.created_at).toLocaleTimeString('id-ID');
+      }
+
       const photoEl = document.getElementById('latest-photo');
       const placeholderEl = document.getElementById('photo-placeholder');
       const zoomBadgeEl = document.getElementById('photo-zoom-badge');
@@ -1176,9 +1206,26 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    let currentFilter = 'all';
+
+    function setMeasurementFilter(f) {
+      currentFilter = f;
+      ['all', 'real', 'mock'].forEach(name => {
+        const btn = document.getElementById('filter-' + name);
+        if (!btn) return;
+        if (name === f) {
+          btn.className = 'px-2 py-0.5 rounded-md font-semibold transition bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-xs';
+        } else {
+          btn.className = 'px-2 py-0.5 rounded-md theme-muted hover:text-zinc-900 dark:hover:text-zinc-100 transition';
+        }
+      });
+      fetchInitialData();
+    }
+
     async function fetchInitialData() {
       try {
-        const res = await fetch('/api/v1/measurements?limit=50');
+        const url = '/api/v1/measurements?limit=50' + (currentFilter !== 'all' ? '&filter=' + currentFilter : '');
+        const res = await fetch(url);
         if (res.ok) {
           measurements = await res.json();
           renderUI();
