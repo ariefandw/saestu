@@ -27,8 +27,7 @@ except ImportError:
 
 API_BASE = os.environ.get("SAESTU_EDGE_URL", "http://localhost:8080")
 API_KEY = os.environ.get("DEVICE_API_KEY", "")
-if not API_KEY:
-    raise SystemExit("Set env DEVICE_API_KEY dulu.")
+# DEVICE_API_KEY opsional (PoC): kalau kosong, header tidak dikirim.
 DEVICE_ID = "SIM-SCALE-BAYI-01"
 
 NAMES = [
@@ -82,7 +81,7 @@ def post_json(endpoint, data):
     req = urllib.request.Request(
         url,
         data=json.dumps(data).encode('utf-8'),
-        headers={'Content-Type': 'application/json', 'X-API-Key': API_KEY}
+        headers={'Content-Type': 'application/json', **({'X-API-Key': API_KEY} if API_KEY else {})}
     )
     with urllib.request.urlopen(req, timeout=3) as resp:
         return json.loads(resp.read().decode('utf-8'))
@@ -104,7 +103,7 @@ def upload_photo(image_bytes, filename="simulated_capture.jpg", length_cm=None):
     req = urllib.request.Request(
         f"{API_BASE}/api/v1/photos/upload",
         data=body,
-        headers={'Content-Type': f'multipart/form-data; boundary={boundary}', 'X-API-Key': API_KEY}
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}', **({'X-API-Key': API_KEY} if API_KEY else {})}
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read().decode('utf-8'))

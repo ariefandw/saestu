@@ -125,12 +125,13 @@ void uploadPhotoAsync() {
 
 ---
 
-## ?? Autentikasi & Aturan Validasi (WAJIB)
+## ?? Konfigurasi Opsional (mode PoC)
 
-Semua endpoint `POST` (telemetry, measurements, with-photo, photos/upload) wajib header:
+Semua opsional. Default-nya longgar supaya gampang dipakai untuk penelitian.
 
-```
-X-API-Key: <DEVICE_API_KEY>
-```
-
-- Tanpa/ salah key -> `401`. Server tidak mau start kalau `DEVICE_API_KEY` kosong (< 16 karakter). - `weight_grams` harus 500-30000. `length_cm` harus `0` (tidak diukur) atau 20-130. Di luar itu -> `422`. - `device_id` berawalan `MOCK` ditolak. Data mock hanya dibuat server saat `ENABLE_MOCK=true` (dev saja). - `GET /api/v1/measurements` menerima `filter=all|real|mock` dan `max_age_sec=N` (umur dihitung jam server). Tiap record punya field `source`. - CORS hanya untuk origin di env `ALLOWED_ORIGINS` (pisah koma). - Jangan jalankan `simulate_iot.py` ke server produksi: `device_id` simulasi tercatat sebagai data **real**.
+- ``DEVICE_API_KEY``: kalau diisi, semua ``POST`` wajib header ``X-API-Key: <key>`` (salah/kosong -> ``401``). Kalau kosong, endpoint tulis terbuka (ada warning di log). **Isi ini kalau server terekspos ke internet.**
+- ``ALLOWED_ORIGINS``: daftar origin dipisah koma. Kosong = CORS terbuka (``*``).
+- ``ENABLE_MOCK=true``: mengaktifkan endpoint mock (dev/demo saja).
+- Validasi hanya sanity check: ``weight_grams`` 1-100000, ``length_cm`` 0 atau 1-300. ``device_id`` berawalan ``MOCK`` ditolak di endpoint ingest.
+- ``GET /api/v1/measurements`` menerima ``filter=all|real|mock`` dan ``max_age_sec=N`` (umur dihitung jam server). Tiap record punya field ``source``.
+- ``simulate_iot.py`` tercatat sebagai data **real**. Jangan jalankan ke server yang berisi data penelitian asli.

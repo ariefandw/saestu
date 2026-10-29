@@ -147,9 +147,10 @@ func main() {
 		log.Fatalf("Failed to init db schema: %v", err)
 	}
 
+	// PoC: DEVICE_API_KEY opsional. Kosong = endpoint tulis terbuka (jangan untuk produksi).
 	deviceKey := os.Getenv("DEVICE_API_KEY")
-	if len(deviceKey) < 16 {
-		log.Fatalf("DEVICE_API_KEY wajib diisi (minimal 16 karakter). Server menolak jalan tanpa auth.")
+	if deviceKey == "" {
+		log.Printf("WARNING: DEVICE_API_KEY kosong, endpoint tulis TIDAK diautentikasi (mode PoC).")
 	}
 
 	app := &App{
@@ -206,7 +207,9 @@ func main() {
 	}
 
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && allowedOrigins[origin] {
+		if len(allowedOrigins) == 0 {
+			w.Header().Set("Access-Control-Allow-Origin", "*") // PoC: terbuka kalau allowlist tidak di-set
+		} else if origin := r.Header.Get("Origin"); origin != "" && allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
@@ -283,10 +286,10 @@ func initDB(db *sql.DB) error {
 
 // Batas validasi fisik bayi/balita. length_cm == 0 berarti "tidak diukur".
 const (
-	minWeightGrams = 500.0
-	maxWeightGrams = 30000.0
-	minLengthCM    = 20.0
-	maxLengthCM    = 130.0
+	minWeightGrams = 1.0      // PoC: hanya buang nol/negatif/NaN
+	maxWeightGrams = 100000.0 // 100 kg, sekadar anti-typo
+	minLengthCM    = 1.0
+	maxLengthCM    = 300.0
 	maxBodyBytes   = 12 << 20
 )
 
@@ -308,6 +311,11 @@ func validateReading(deviceID string, weight, length float64) string {
 // requireDeviceKey melindungi endpoint tulis. Key via header X-API-Key atau Authorization: Bearer.
 func (app *App) requireDeviceKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if app.deviceKey == "" {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			next(w, r)
+			return
+		}
 		key := r.Header.Get("X-API-Key")
 		if key == "" {
 			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
