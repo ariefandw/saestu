@@ -32,21 +32,31 @@ var estimateSlots = make(chan struct{}, estimateMaxWorkers)
 
 // pythonResult adalah JSON mentah dari estimate_length.py.
 type pythonResult struct {
-	Success    bool            `json:"success"`
-	LengthCM   float64         `json:"length_cm"`
-	Confidence float64         `json:"confidence"`
-	PPM        float64         `json:"ppm"`
-	Segments   json.RawMessage `json:"segments_px"`
-	Error      string          `json:"error"`
+	Success      bool            `json:"success"`
+	Method       string          `json:"method"`
+	MethodName   string          `json:"method_name"`
+	LengthCM     float64         `json:"length_cm"`
+	Confidence   float64         `json:"confidence"`
+	PPM          float64         `json:"ppm"`
+	MarkerID     *int            `json:"marker_id,omitempty"`
+	MarkerSidePX *float64        `json:"marker_side_px,omitempty"`
+	MarkerSizeCM *float64        `json:"marker_size_cm,omitempty"`
+	Segments     json.RawMessage `json:"segments_px"`
+	Error        string          `json:"error"`
 }
 
 // estimateResponse adalah kontrak ke client (PWA). Stateless: tidak ada yang ditulis ke DB.
 type estimateResponse struct {
 	Success        bool            `json:"success"`
+	Method         string          `json:"method,omitempty"`
+	MethodName     string          `json:"method_name,omitempty"`
 	LengthCM       float64         `json:"length_cm,omitempty"`
 	Confidence     float64         `json:"confidence,omitempty"`
 	PPM            float64         `json:"ppm,omitempty"`
 	MaxDimCM       float64         `json:"max_dim_cm,omitempty"`
+	MarkerID       *int            `json:"marker_id,omitempty"`
+	MarkerSidePX   *float64        `json:"marker_side_px,omitempty"`
+	MarkerSizeCM   *float64        `json:"marker_size_cm,omitempty"`
 	Segments       json.RawMessage `json:"segments_px,omitempty"`
 	AnnotatedImage string          `json:"annotated_image,omitempty"` // data URL JPEG
 	Plausible      bool            `json:"plausible"`
@@ -88,6 +98,27 @@ func (app *App) handleEstimateLength(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		maxDim = parsed
+	}
+
+	method := r.FormValue("method")
+	if method == "" {
+		method = r.URL.Query().Get("method")
+	}
+	if method == "" {
+		method = "mediapipe"
+	}
+	if method != "mediapipe" && method != "contour_caliper" && method != "aruco_marker" {
+		writeEstimate(w, http.StatusBadRequest, estimateResponse{
+			Error: "method harus 'mediapipe', 'contour_caliper', atau 'aruco_marker'",
+		})
+		return
+	}
+
+	markerSize := 10.0
+	if v := r.FormValue("marker_size_cm"); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil && parsed >= 1.0 && parsed <= 50.0 {
+			markerSize = parsed
+		}
 	}
 
 	file, _, err := r.FormFile("photo")
@@ -137,11 +168,15 @@ func (app *App) handleEstimateLength(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), estimateTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, pythonBin, "estimate_length.py",
+	cmdArgs := []string{
+		"estimate_length.py",
 		"--image", inPath,
+		"--method", method,
 		"--max-dim-cm", strconv.FormatFloat(maxDim, 'f', 2, 64),
+		"--marker-size-cm", strconv.FormatFloat(markerSize, 'f', 2, 64),
 		"--output-annotated", outPath,
-	)
+	}
+	cmd := exec.CommandContext(ctx, pythonBin, cmdArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -154,7 +189,7 @@ func (app *App) handleEstimateLength(w http.ResponseWriter, r *http.Request) {
 			writeEstimate(w, http.StatusGatewayTimeout, estimateResponse{Error: "Estimasi terlalu lama (timeout)"})
 			return
 		}
-		writeEstimate(w, http.StatusBadGateway, estimateResponse{Error: "Estimator tidak tersedia di server (python/mediapipe belum terpasang?)"})
+		writeEstimate(w, http.StatusBadGateway, estimateResponse{Error: "Estimator tidak tersedia di server (python/mediapipe/opencv belum terpasang?)"})
 		return
 	}
 
@@ -163,16 +198,26 @@ func (app *App) handleEstimateLength(w http.ResponseWriter, r *http.Request) {
 		if msg == "" {
 			msg = "Estimasi gagal"
 		}
-		writeEstimate(w, http.StatusUnprocessableEntity, estimateResponse{Error: msg, MaxDimCM: maxDim})
+		writeEstimate(w, http.StatusUnprocessableEntity, estimateResponse{
+			Error:      msg,
+			Method:     method,
+			MethodName: res.MethodName,
+			MaxDimCM:   maxDim,
+		})
 		return
 	}
 
 	resp := estimateResponse{
 		Success:       true,
+		Method:        res.Method,
+		MethodName:    res.MethodName,
 		LengthCM:      res.LengthCM,
 		Confidence:    res.Confidence,
 		PPM:           res.PPM,
 		MaxDimCM:      maxDim,
+		MarkerID:      res.MarkerID,
+		MarkerSidePX:  res.MarkerSidePX,
+		MarkerSizeCM:  res.MarkerSizeCM,
 		Segments:      res.Segments,
 		Plausible:     res.LengthCM >= plausibleMinLengthCM && res.LengthCM <= plausibleMaxLengthCM,
 		LowConfidence: res.Confidence < estimateLowConfBelow,
