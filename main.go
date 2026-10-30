@@ -132,12 +132,49 @@ func main() {
 		port = "8080"
 	}
 
-	uploadDir := "./uploads"
+	// 1. Tentukan direktori database & auto-detect volume persistent
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		if _, err := os.Stat("/app/data"); err == nil {
+			dbPath = "/app/data/saestu_iot.db"
+		} else if _, err := os.Stat("./data"); err == nil {
+			dbPath = "./data/saestu_iot.db"
+		} else {
+			dbPath = "saestu_iot.db"
+		}
+	}
+
+	if dbDir := filepath.Dir(dbPath); dbDir != "." && dbDir != "" {
+		_ = os.MkdirAll(dbDir, 0755)
+	}
+
+	// Auto-migrasi file db lama jika baru pertama kali pakai volume persistent
+	if dbPath != "saestu_iot.db" {
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			if _, oldErr := os.Stat("saestu_iot.db"); oldErr == nil {
+				log.Printf("📦 Memindahkan saestu_iot.db lama ke volume persistent: %s", dbPath)
+				_ = os.Rename("saestu_iot.db", dbPath)
+			}
+		}
+	}
+
+	// 2. Tentukan direktori upload foto
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		if _, err := os.Stat("/app/uploads"); err == nil {
+			uploadDir = "/app/uploads"
+		} else {
+			uploadDir = "./uploads"
+		}
+	}
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		log.Fatalf("Failed to create upload dir: %v", err)
 	}
 
-	db, err := sql.Open("sqlite", "saestu_iot.db")
+	log.Printf("📁 Database path : %s", dbPath)
+	log.Printf("📸 Uploads path  : %s", uploadDir)
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatalf("Failed to open db: %v", err)
 	}
@@ -1678,6 +1715,3 @@ void saveMeasurement(float weight, float length, const char* notes) {
 </body>
 </html>
 `
-
-
-

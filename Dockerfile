@@ -37,6 +37,8 @@ COPY --from=builder /app/saestu-server /app/saestu-server
 ENV PORT=8080
 ENV TZ=Asia/Jakarta
 ENV PYTHON_BIN=python
+ENV DB_PATH=/app/data/saestu_iot.db
+ENV UPLOAD_DIR=/app/uploads
 
 EXPOSE 8080
 

@@ -9,10 +9,12 @@ services:
       - "8080:8080"
     volumes:
       - ./uploads:/app/uploads
-      - ./saestu_iot.db:/app/saestu_iot.db
+      - ./data:/app/data
     environment:
       - PORT=8080
       - TZ=Asia/Jakarta
+      - DB_PATH=/app/data/saestu_iot.db
+      - UPLOAD_DIR=/app/uploads
       - DEVICE_API_KEY=${DEVICE_API_KEY:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - ENABLE_MOCK=${ENABLE_MOCK:-false}

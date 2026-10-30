@@ -10,6 +10,8 @@
 # Uploads directory contents (keep folder structure)
 uploads/*
 !uploads/.gitkeep
+data/*
+!data/.gitkeep
 
 # Python cache & virtualenvs
 __pycache__/
