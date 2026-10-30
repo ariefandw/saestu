@@ -1,15 +1,16 @@
-# Dataset Gambar Uji Coba Pengukuran Panjang Badan Saestu (Ground Truth TB)
+# Dataset Foto Uji Coba Pengukuran Panjang Badan Saestu (Ground Truth TB)
 
-Ketiga gambar di bawah ini adalah foto dokumenter klinis otentik (real photorealistic) posisi telentang (*supine*) yang sudah dikalibrasi presisi dengan parameter default sistem Saestu. Nilai Ground Truth Tinggi Badan (TB) dicantumkan langsung di nama file untuk memudahkan verifikasi dan pengujian otomatis.
+Folder ini berisi **3 foto mentahan (raw clinical photos)** untuk **3 bayi yang berbeda** dalam posisi telentang (*supine*) dengan parameter **kalibrasi default** (`maxDimCm = 100 cm`, `markerSizeCm = 10.0 cm`). Nilai **TB Actual (Ground Truth)** dicantumkan langsung di nama file untuk memudahkan verifikasi dan benchmarking.
 
 ---
 
-## 1. `1_mediapipe_tb61.3cm_kalibrasi100cm.jpg`
-- **Metode Pengujian:** `MediaPipe Pose (AI Keypoint)`
-- **Ground Truth TB:** **`61.3 cm`**
-- **Kalibrasi Default:** Skala Frame Bidang Matras = `100.0 cm` (`maxDimCm = 100`)
-- **Deskripsi Klinis:** Bayi usia 5 bulan berbaring telentang di atas *infantometer* Posyandu resmi dengan mistar ukur cm tertera di samping tubuh.
-- **Deteksi Algoritma:** BlazePose mendeteksi 33 landmark anatomi:
+## 1. `bayi1_mediapipe_tb_actual_61.3cm.jpg`
+- **Subjek:** Bayi 1 (Usia 5 bulan, rambut hitam, baju putih).
+- **Model Uji:** **MediaPipe Pose** (AI Keypoint 33-Landmark BlazePose).
+- **TB Actual:** **`61.3 cm`**
+- **Kalibrasi:** Skala Frame Bidang Matras = `100.0 cm` (Default).
+- **Setting Klinis:** Bayi berbaring di atas *infantometer* Posyandu dengan mistar ukur cm fisik di samping tubuh.
+- **Hasil Deteksi:**
   - Ubun-ubun (*Crown*) ke bahu: 106.8 px
   - Bahu ke panggul (*Mid-Hip*): 277.3 px
   - Panggul ke tumit (*Leg Length*): 351.0 px
@@ -17,21 +18,25 @@ Ketiga gambar di bawah ini adalah foto dokumenter klinis otentik (real photoreal
 
 ---
 
-## 2. `2_contour_tb78.6cm_kalibrasi100cm.jpg`
-- **Metode Pengujian:** `Siluet Kontur (Bebas Landmark)`
-- **Ground Truth TB:** **`78.6 cm`**
-- **Kalibrasi Default:** Skala Frame Bidang Matras = `100.0 cm` (`maxDimCm = 100`)
-- **Deskripsi Klinis:** Bayi usia 6 bulan di atas matras vinil pediatrik biru polos tanpa penghalang.
-- **Deteksi Algoritma:** Segmentasi morfologi *bounding caliper box* dari ujung ubun-ubun kepala hingga ujung tumit kaki dengan kontras warna latar matras yang bersih.
-  - **Confidence:** `0.88`
+## 2. `bayi2_contour_tb_actual_78.6cm.jpg`
+- **Subjek:** Bayi 2 (Usia 6 bulan, rambut cokelat terang, baju putih).
+- **Model Uji:** **Siluet Kontur** (Bebas Landmark & Morfologi Caliper).
+- **TB Actual:** **`78.6 cm`**
+- **Kalibrasi:** Skala Frame Bidang Matras = `100.0 cm` (Default).
+- **Setting Klinis:** Bayi berbaring di atas matras vinil pediatrik biru polos tanpa distraksi.
+- **Hasil Deteksi:**
+  - Segmentasi kontur siluet tubuh dari ubun-ubun kepala hingga ujung tumit kaki dengan *minimum bounding box caliper*.
+  - **Confidence:** `0.88` (88%)
 
 ---
 
-## 3. `3_aruco_tb79.3cm_marker10cm.jpg`
-- **Metode Pengujian:** `ArUco Metrologi (Marker Fisik)`
-- **Ground Truth TB:** **`79.3 cm`**
-- **Kalibrasi Default:** Ukuran Fisik Marker = `10.0 cm` (`markerSizeCm = 10.0`, Dictionary `DICT_4X4_50`, ID: 0)
-- **Deskripsi Klinis:** Foto bayi di atas matras pemeriksaan dilengkapi kartu kalibrasi fiducial ArUco 4x4 (10x10 cm) di pojok atas matras.
-- **Deteksi Algoritma:** Deteksi otomatis *fiducial marker* fisik untuk kalibrasi piksel per sentimeter (*PPM = 11.9 px/cm*) tanpa bergantung pada jarak atau zoom kamera.
-  - **Marker ID Terdeteksi:** `0` (Sisi marker: `119 px` = `10.0 cm`)
+## 3. `bayi3_aruco_tb_actual_80.7cm.jpg`
+- **Subjek:** Bayi 3 (Usia 4 bulan, rambut lebat, romper *coral-red* cerah).
+- **Model Uji:** **ArUco Metrologi** (Kalibrasi Marker Fisik).
+- **TB Actual:** **`80.7 cm`**
+- **Kalibrasi:** Ukuran Fisik Marker = `10.0 cm` (Default, Dictionary `DICT_4X4_50`, Marker ID: 0).
+- **Setting Klinis:** Bayi berbaring di atas matras pemeriksaan dengan kartu kalibrasi fiducial ArUco 4x4 (10x10 cm) di pojok atas matras.
+- **Hasil Deteksi:**
+  - Marker ID #0 terdeteksi otomatis, menghasilkan kalibrasi metrologi `11.9 px/cm`.
+  - Tubuh tersegmentasi otomatis dan diukur sepanjang aksis kepala-tumit.
   - **Confidence:** `0.97` (97%)
