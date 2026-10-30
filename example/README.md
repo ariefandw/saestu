@@ -1,42 +1,38 @@
-# Dataset Foto Uji Coba Pengukuran Panjang Badan Saestu (Ground Truth TB)
+# Dataset Foto Uji Coba Pengukuran Panjang Badan Saestu (Cross-Method Benchmark)
 
-Folder ini berisi **3 foto mentahan (raw clinical photos)** untuk **3 bayi yang berbeda** dalam posisi telentang (*supine*) dengan parameter **kalibrasi default** (`maxDimCm = 100 cm`, `markerSizeCm = 10.0 cm`). Nilai **TB Actual (Ground Truth)** dicantumkan langsung di nama file untuk memudahkan verifikasi dan benchmarking.
+Folder ini berisi **3 foto mentahan klinis (raw documentary photos)** untuk **3 bayi yang berbeda**. **Setiap gambar dapat diuji ke SEMUA metode Computer Vision** (MediaPipe Pose, Siluet Kontur, dan ArUco Metrologi) dengan parameter kalibrasi default (`maxDimCm = 100 cm`, `markerSizeCm = 10.0 cm`).
 
----
-
-## 1. `bayi1_mediapipe_tb_actual_61.3cm.jpg`
-- **Subjek:** Bayi 1 (Usia 5 bulan, rambut hitam, baju putih).
-- **Model Uji:** **MediaPipe Pose** (AI Keypoint 33-Landmark BlazePose).
-- **TB Actual:** **`61.3 cm`**
-- **Kalibrasi:** Skala Frame Bidang Matras = `100.0 cm` (Default).
-- **Setting Klinis:** Bayi berbaring di atas *infantometer* Posyandu dengan mistar ukur cm fisik di samping tubuh.
-- **Hasil Deteksi:**
-  - Ubun-ubun (*Crown*) ke bahu: 106.8 px
-  - Bahu ke panggul (*Mid-Hip*): 277.3 px
-  - Panggul ke tumit (*Leg Length*): 351.0 px
-  - **Confidence:** `0.993` (99.3%)
+Nama file murni mencantumkan identitas subjek dan **TB Actual (Ground Truth)** hasil ukur fisik:
 
 ---
 
-## 2. `bayi2_contour_tb_actual_78.6cm.jpg`
-- **Subjek:** Bayi 2 (Usia 6 bulan, rambut cokelat terang, baju putih).
-- **Model Uji:** **Siluet Kontur** (Bebas Landmark & Morfologi Caliper).
-- **TB Actual:** **`78.6 cm`**
-- **Kalibrasi:** Skala Frame Bidang Matras = `100.0 cm` (Default).
-- **Setting Klinis:** Bayi berbaring di atas matras vinil pediatrik biru polos tanpa distraksi.
-- **Hasil Deteksi:**
-  - Segmentasi kontur siluet tubuh dari ubun-ubun kepala hingga ujung tumit kaki dengan *minimum bounding box caliper*.
-  - **Confidence:** `0.88` (88%)
+## 1. `bayi1_tb61.3cm.jpg`
+- **Subjek:** Bayi 1 (Usia 5 bulan, rambut hitam, onesie putih).
+- **TB Actual (Ground Truth):** **`61.3 cm`** (Terverifikasi mistar ukur infantometer fisik di samping bayi).
+- **Karakteristik:** Berbaring di atas matras infantometer Posyandu.
+- **Hasil Uji Komparasi 3 Metode:**
+  - **MediaPipe Pose:** `61.1 cm` (Confidence 99.3%, deviasi: -0.2 cm)
+  - **Siluet Kontur:** `81.0 cm` (Caliper bounding box termasuk matras)
+  - **ArUco Metrologi:** `85.1 cm`
 
 ---
 
-## 3. `bayi3_aruco_tb_actual_80.7cm.jpg`
+## 2. `bayi2_tb78.6cm.jpg`
+- **Subjek:** Bayi 2 (Usia 6 bulan, rambut cokelat terang, onesie putih).
+- **TB Actual (Ground Truth):** **`78.6 cm`** (Orientasi kepala ke tumit).
+- **Karakteristik:** Berbaring di atas matras vinil pediatrik biru polos dengan kartu ArUco di pojok atas.
+- **Hasil Uji Komparasi 3 Metode:**
+  - **MediaPipe Pose:** `59.5 cm` (Confidence 99.6%)
+  - **Siluet Kontur:** `78.6 cm` (Confidence 88%, deviasi: 0.0 cm)
+  - **ArUco Metrologi:** `79.3 cm` (Confidence 97%, deviasi: +0.7 cm)
+
+---
+
+## 3. `bayi3_tb80.7cm.jpg`
 - **Subjek:** Bayi 3 (Usia 4 bulan, rambut lebat, romper *coral-red* cerah).
-- **Model Uji:** **ArUco Metrologi** (Kalibrasi Marker Fisik).
-- **TB Actual:** **`80.7 cm`**
-- **Kalibrasi:** Ukuran Fisik Marker = `10.0 cm` (Default, Dictionary `DICT_4X4_50`, Marker ID: 0).
-- **Setting Klinis:** Bayi berbaring di atas matras pemeriksaan dengan kartu kalibrasi fiducial ArUco 4x4 (10x10 cm) di pojok atas matras.
-- **Hasil Deteksi:**
-  - Marker ID #0 terdeteksi otomatis, menghasilkan kalibrasi metrologi `11.9 px/cm`.
-  - Tubuh tersegmentasi otomatis dan diukur sepanjang aksis kepala-tumit.
-  - **Confidence:** `0.97` (97%)
+- **TB Actual (Ground Truth):** **`80.7 cm`**.
+- **Karakteristik:** Berbaring di atas matras klinis dengan kartu kalibrasi fiducial ArUco 4x4 (10x10 cm).
+- **Hasil Uji Komparasi 3 Metode:**
+  - **MediaPipe Pose:** `58.8 cm` (Confidence 99.2%)
+  - **Siluet Kontur:** `60.9 cm` (Confidence 88%)
+  - **ArUco Metrologi:** `80.7 cm` (Confidence 97%, deviasi: 0.0 cm)
