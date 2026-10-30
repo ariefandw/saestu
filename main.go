@@ -172,6 +172,9 @@ func main() {
 	// 3. Async Photo Upload (Jepret terpisah, di-link ke measurement terbaru)
 	mux.HandleFunc("POST /api/v1/photos/upload", app.requireDeviceKey(app.handleAsyncPhotoUpload))
 
+	// 3b. Estimasi tinggi badan dari kamera (stateless, tidak menulis DB; dipakai PWA)
+	mux.HandleFunc("POST /api/v1/estimate-length", app.handleEstimateLength)
+
 	// 4. Query & Dashboard
 	// Mock HANYA aktif kalau ENABLE_MOCK=true (dev/demo). Di produksi route-nya tidak ada.
 	if os.Getenv("ENABLE_MOCK") == "true" {
@@ -406,7 +409,11 @@ func (app *App) estimateLengthFromPhoto(photoPath string) float64 {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "python", "estimate_length.py", "--image", photoPath, "--max-dim-cm", "100.0")
+	pythonBin := os.Getenv("PYTHON_BIN")
+	if pythonBin == "" {
+		pythonBin = "python"
+	}
+	cmd := exec.CommandContext(ctx, pythonBin, "estimate_length.py", "--image", photoPath, "--max-dim-cm", "100.0")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("[MediaPipe] Execution failed/skipped: %v", err)

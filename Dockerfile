@@ -1,4 +1,4 @@
-# Multi-stage build for ultra-small, secure production image
+# Multi-stage build: Go server (static) + Python/MediaPipe untuk estimasi tinggi badan dari kamera
 FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
@@ -14,20 +14,29 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o saestu-server .
 
-# Final minimal production container
-FROM alpine:3.20
+# Runtime: Debian slim (MediaPipe tidak punya wheel untuk Alpine/musl)
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata libgl1 libegl1 libgles2 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/* && \
     mkdir -p /app/uploads /app/data
 
-# Copy binary from builder
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Model pose dibake ke image supaya tidak download tiap container restart
+RUN python -c "import urllib.request; urllib.request.urlretrieve('https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task', '/app/pose_landmarker_full.task')"
+
+COPY estimate_length.py .
 COPY --from=builder /app/saestu-server /app/saestu-server
 
 # Default environment
 ENV PORT=8080
 ENV TZ=Asia/Jakarta
+ENV PYTHON_BIN=python
 
 EXPOSE 8080
 
