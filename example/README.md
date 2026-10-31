@@ -7,13 +7,13 @@ Nama file murni mencantumkan identitas subjek dan **TB Actual (Ground Truth)** h
 ---
 
 ## 1. `bayi1_tb61.3cm.jpg`
-- **Subjek:** Bayi 1 (Usia 5 bulan, rambut hitam, onesie putih).
-- **TB Actual (Ground Truth):** **`61.3 cm`** (Terverifikasi mistar ukur infantometer fisik di samping bayi).
-- **Karakteristik:** Berbaring di atas matras infantometer Posyandu.
+- **Subjek:** Bayi 1 (Usia 4 bulan, onesie katun putih polos).
+- **TB Actual (Ground Truth):** **`61.3 cm`** (Skala default 100 cm, 12.0 px/cm = 736 px).
+- **Karakteristik:** Berbaring di atas matras vinil pediatrik hijau-mint polos tanpa headboard kayu, tanpa mistar, tanpa ubin.
 - **Hasil Uji Komparasi 3 Metode:**
-  - **MediaPipe Pose:** `61.1 cm` (Confidence 99.3%, deviasi: -0.2 cm)
-  - **Siluet Kontur:** `81.0 cm` (Caliper bounding box termasuk matras)
-  - **ArUco Metrologi:** `85.1 cm`
+  - **Siluet Kontur:** `61.3 cm` (Confidence 88%, deviasi: 0.0 cm)
+  - **MediaPipe Pose:** `51.4 cm` (Confidence 99.6%)
+  - **ArUco Metrologi:** Standby (membutuhkan marker fisik)
 
 ---
 
